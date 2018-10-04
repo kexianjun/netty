@@ -20,6 +20,7 @@ import io.netty.buffer.ByteBufAllocator;
 import io.netty.internal.tcnative.Buffer;
 import io.netty.internal.tcnative.SSL;
 import io.netty.util.AbstractReferenceCounted;
+import io.netty.util.CharsetUtil;
 import io.netty.util.ReferenceCounted;
 import io.netty.util.ResourceLeakDetector;
 import io.netty.util.ResourceLeakDetectorFactory;
@@ -142,7 +143,6 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
     // OpenSSL state
     private long ssl;
     private long networkBIO;
-    private boolean certificateSet;
 
     private enum HandshakeState {
         /**
@@ -217,7 +217,6 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
     private final Certificate[] localCerts;
     private final ByteBuffer[] singleSrcBuffer = new ByteBuffer[1];
     private final ByteBuffer[] singleDstBuffer = new ByteBuffer[1];
-    private final OpenSslKeyMaterialManager keyMaterialManager;
     private final boolean enableOcsp;
     private int maxWrapOverhead;
     private int maxWrapBufferSize;
@@ -238,17 +237,90 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
      *                             wrap or unwrap call.
      * @param leakDetection {@code true} to enable leak detection of this object.
      */
-    ReferenceCountedOpenSslEngine(ReferenceCountedOpenSslContext context, ByteBufAllocator alloc, String peerHost,
+    ReferenceCountedOpenSslEngine(ReferenceCountedOpenSslContext context, final ByteBufAllocator alloc, String peerHost,
                                   int peerPort, boolean jdkCompatibilityMode, boolean leakDetection) {
         super(peerHost, peerPort);
         OpenSsl.ensureAvailability();
         this.alloc = checkNotNull(alloc, "alloc");
         apn = (OpenSslApplicationProtocolNegotiator) context.applicationProtocolNegotiator();
-        session = new OpenSslSession(context.sessionContext());
         clientMode = context.isClient();
+        if (PlatformDependent.javaVersion() >= 7) {
+            session = new ExtendedOpenSslSession(new DefaultOpenSslSession(context.sessionContext())) {
+                private String[] peerSupportedSignatureAlgorithms;
+                private List requestedServerNames;
+
+                @Override
+                public List getRequestedServerNames() {
+                    if (clientMode) {
+                        return Java8SslUtils.getSniHostNames(sniHostNames);
+                    } else {
+                        synchronized (ReferenceCountedOpenSslEngine.this) {
+                            if (requestedServerNames == null) {
+                                if (isDestroyed()) {
+                                    requestedServerNames = Collections.emptyList();
+                                } else {
+                                    String name = SSL.getSniHostname(ssl);
+                                    if (name == null) {
+                                        requestedServerNames = Collections.emptyList();
+                                    } else {
+                                        // Convert to bytes as we do not want to do any strict validation of the
+                                        // SNIHostName while creating it.
+                                        requestedServerNames =
+                                                Java8SslUtils.getSniHostName(
+                                                        SSL.getSniHostname(ssl).getBytes(CharsetUtil.UTF_8));
+                                    }
+                                }
+                            }
+                            return requestedServerNames;
+                        }
+                    }
+                }
+
+                @Override
+                public String[] getPeerSupportedSignatureAlgorithms() {
+                    synchronized (ReferenceCountedOpenSslEngine.this) {
+                        if (peerSupportedSignatureAlgorithms == null) {
+                            if (isDestroyed()) {
+                                peerSupportedSignatureAlgorithms = EmptyArrays.EMPTY_STRINGS;
+                            } else {
+                                String[] algs = SSL.getSigAlgs(ssl);
+                                if (algs == null) {
+                                    peerSupportedSignatureAlgorithms = EmptyArrays.EMPTY_STRINGS;
+                                } else {
+                                    List<String> algorithmList = new ArrayList<String>(algs.length);
+                                    for (String alg: algs) {
+                                        String converted = SignatureAlgorithmConverter.toJavaName(alg);
+                                        if (converted != null) {
+                                            algorithmList.add(converted);
+                                        }
+                                    }
+                                    peerSupportedSignatureAlgorithms = algorithmList.toArray(new String[0]);
+                                }
+                            }
+                        }
+                        return peerSupportedSignatureAlgorithms.clone();
+                    }
+                }
+
+                @Override
+                public List<byte[]> getStatusResponses() {
+                    byte[] ocspResponse = null;
+                    if (enableOcsp && clientMode) {
+                        synchronized (ReferenceCountedOpenSslEngine.this) {
+                            if (!isDestroyed()) {
+                                ocspResponse = SSL.getOcspResponse(ssl);
+                            }
+                        }
+                    }
+                    return ocspResponse == null ?
+                            Collections.<byte[]>emptyList() : Collections.singletonList(ocspResponse);
+                }
+            };
+        } else {
+            session = new DefaultOpenSslSession(context.sessionContext());
+        }
         engineMap = context.engineMap;
         localCerts = context.keyCertChain;
-        keyMaterialManager = context.keyMaterialManager();
         enableOcsp = context.enableOcsp;
         this.jdkCompatibilityMode = jdkCompatibilityMode;
         Lock readerLock = context.ctxLock.readLock();
@@ -1570,11 +1642,6 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
             lastAccessed = System.currentTimeMillis();
         }
 
-        if (!certificateSet && keyMaterialManager != null) {
-            certificateSet = true;
-            keyMaterialManager.setKeyMaterialServerSide(this);
-        }
-
         int code = SSL.doHandshake(ssl);
         if (code <= 0) {
             // Check if we have a pending exception that was created during the handshake and if so throw it after
@@ -1839,7 +1906,7 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
         return Buffer.address(b);
     }
 
-    private final class OpenSslSession implements SSLSession {
+    private final class DefaultOpenSslSession implements OpenSslSession  {
         private final OpenSslSessionContext sessionContext;
 
         // These are guarded by synchronized(OpenSslEngine.this) as handshakeFinished() may be triggered by any
@@ -1855,8 +1922,12 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
         // lazy init for memory reasons
         private Map<String, Object> values;
 
-        OpenSslSession(OpenSslSessionContext sessionContext) {
+        DefaultOpenSslSession(OpenSslSessionContext sessionContext) {
             this.sessionContext = sessionContext;
+        }
+
+        private SSLSessionBindingEvent newSSLSessionBindingEvent(String name) {
+            return new SSLSessionBindingEvent(session, name);
         }
 
         @Override
@@ -1925,7 +1996,8 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
             }
             Object old = values.put(name, value);
             if (value instanceof SSLSessionBindingListener) {
-                ((SSLSessionBindingListener) value).valueBound(new SSLSessionBindingEvent(this, name));
+                // Use newSSLSessionBindingEvent so we alway use the wrapper if needed.
+                ((SSLSessionBindingListener) value).valueBound(newSSLSessionBindingEvent(name));
             }
             notifyUnbound(old, name);
         }
@@ -1965,7 +2037,8 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
 
         private void notifyUnbound(Object value, String name) {
             if (value instanceof SSLSessionBindingListener) {
-                ((SSLSessionBindingListener) value).valueUnbound(new SSLSessionBindingEvent(this, name));
+                // Use newSSLSessionBindingEvent so we alway use the wrapper if needed.
+                ((SSLSessionBindingListener) value).valueUnbound(newSSLSessionBindingEvent(name));
             }
         }
 
@@ -1973,7 +2046,8 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
          * Finish the handshake and so init everything in the {@link OpenSslSession} that should be accessible by
          * the user.
          */
-        void handshakeFinished() throws SSLException {
+        @Override
+        public void handshakeFinished() throws SSLException {
             synchronized (ReferenceCountedOpenSslEngine.this) {
                 if (!isDestroyed()) {
                     id = SSL.getSessionId(ssl);
@@ -2191,13 +2265,8 @@ public class ReferenceCountedOpenSslEngine extends SSLEngine implements Referenc
             return applicationBufferSize;
         }
 
-        /**
-         * Expand (or increase) the value returned by {@link #getApplicationBufferSize()} if necessary.
-         * <p>
-         * This is only called in a synchronized block, so no need to use atomic operations.
-         * @param packetLengthDataOnly The packet size which exceeds the current {@link #getApplicationBufferSize()}.
-         */
-        void tryExpandApplicationBufferSize(int packetLengthDataOnly) {
+        @Override
+        public void tryExpandApplicationBufferSize(int packetLengthDataOnly) {
             if (packetLengthDataOnly > MAX_PLAINTEXT_LENGTH && applicationBufferSize != MAX_RECORD_SIZE) {
                 applicationBufferSize = MAX_RECORD_SIZE;
             }
