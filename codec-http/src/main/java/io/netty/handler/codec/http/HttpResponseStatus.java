@@ -19,9 +19,11 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
+import io.netty.util.internal.ObjectUtil;
 
 import static io.netty.handler.codec.http.HttpConstants.SP;
 import static io.netty.util.ByteProcessor.FIND_ASCII_SPACE;
+import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
 import static java.lang.Integer.parseInt;
 
 /**
@@ -223,7 +225,7 @@ public class HttpResponseStatus implements Comparable<HttpResponseStatus> {
     /**
      * 421 Misdirected Request
      *
-     * <a href="https://tools.ietf.org/html/draft-ietf-httpbis-http2-15#section-9.1.2">421 Status Code</a>
+     * @see <a href="https://tools.ietf.org/html/rfc7540#section-9.1.2">421 (Misdirected Request) Status Code</a>
      */
     public static final HttpResponseStatus MISDIRECTED_REQUEST = newStatus(421, "Misdirected Request");
 
@@ -538,14 +540,8 @@ public class HttpResponseStatus implements Comparable<HttpResponseStatus> {
     }
 
     private HttpResponseStatus(int code, String reasonPhrase, boolean bytes) {
-        if (code < 0) {
-            throw new IllegalArgumentException(
-                    "code: " + code + " (expected: 0+)");
-        }
-
-        if (reasonPhrase == null) {
-            throw new NullPointerException("reasonPhrase");
-        }
+        checkPositiveOrZero(code, "code");
+        ObjectUtil.checkNotNull(reasonPhrase, "reasonPhrase");
 
         for (int i = 0; i < reasonPhrase.length(); i ++) {
             char c = reasonPhrase.charAt(i);

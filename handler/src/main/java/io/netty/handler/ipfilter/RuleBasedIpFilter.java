@@ -18,6 +18,7 @@ package io.netty.handler.ipfilter;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.util.internal.ObjectUtil;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -28,7 +29,7 @@ import java.net.SocketAddress;
  * will be accepted.
  *
  * If you would like to explicitly take action on rejected {@link Channel}s, you should override
- * {@link #channelRejected(ChannelHandlerContext, SocketAddress)}.
+ * {@link AbstractRemoteAddressFilter#channelRejected(ChannelHandlerContext, SocketAddress)}.
  */
 @Sharable
 public class RuleBasedIpFilter extends AbstractRemoteAddressFilter<InetSocketAddress> {
@@ -36,11 +37,7 @@ public class RuleBasedIpFilter extends AbstractRemoteAddressFilter<InetSocketAdd
     private final IpFilterRule[] rules;
 
     public RuleBasedIpFilter(IpFilterRule... rules) {
-        if (rules == null) {
-            throw new NullPointerException("rules");
-        }
-
-        this.rules = rules;
+        this.rules = ObjectUtil.checkNotNull(rules, "rules");
     }
 
     @Override

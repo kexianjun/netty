@@ -64,7 +64,6 @@ import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -182,13 +181,7 @@ final class SniClientJava8TestUtil {
             if (clientSide) {
                 Assert.assertEquals(0, extendedSSLSession.getPeerSupportedSignatureAlgorithms().length);
             } else {
-                if (session instanceof OpenSslSession && OpenSslTestUtils.isBoringSSL()) {
-                    // BoringSSL does not support SSL_get_sigalgs(...)
-                    // https://boringssl.googlesource.com/boringssl/+/ba16a1e405c617f4179bd780ad15522fb25b0a65%5E%21/
-                    Assert.assertEquals(0, extendedSSLSession.getPeerSupportedSignatureAlgorithms().length);
-                } else {
-                    Assert.assertTrue(extendedSSLSession.getPeerSupportedSignatureAlgorithms().length > 0);
-                }
+                Assert.assertTrue(extendedSSLSession.getPeerSupportedSignatureAlgorithms().length >= 0);
             }
         }
     }
@@ -267,7 +260,7 @@ final class SniClientJava8TestUtil {
                    IOException, CertificateException {
         return new SniX509KeyManagerFactory(
                 new SNIHostName(hostname), SslContext.buildKeyManagerFactory(
-                new X509Certificate[] { cert.cert() }, cert.key(), null, null));
+                new X509Certificate[] { cert.cert() }, cert.key(), null, null, null));
     }
 
     private static final class SniX509KeyManagerFactory extends KeyManagerFactory {

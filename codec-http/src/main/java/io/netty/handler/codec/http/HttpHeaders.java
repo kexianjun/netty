@@ -22,6 +22,7 @@ import io.netty.handler.codec.Headers;
 import io.netty.handler.codec.HeadersUtils;
 import io.netty.util.AsciiString;
 import io.netty.util.CharsetUtil;
+import io.netty.util.internal.ObjectUtil;
 
 import java.text.ParseException;
 import java.util.Calendar;
@@ -1412,9 +1413,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
      * @return {@code this}
      */
     public HttpHeaders add(HttpHeaders headers) {
-        if (headers == null) {
-            throw new NullPointerException("headers");
-        }
+        ObjectUtil.checkNotNull(headers, "headers");
         for (Map.Entry<String, String> e: headers) {
             add(e.getKey(), e.getValue());
         }
@@ -1695,7 +1694,7 @@ public abstract class HttpHeaders implements Iterable<Map.Entry<String, String>>
     }
 
     /**
-     * Returns a deap copy of the passed in {@link HttpHeaders}.
+     * Returns a deep copy of the passed in {@link HttpHeaders}.
      */
     public HttpHeaders copy() {
         return new DefaultHttpHeaders().set(this);

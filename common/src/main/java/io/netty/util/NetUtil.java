@@ -291,7 +291,10 @@ public final class NetUtil {
                         }
                     }
                 } catch (Exception e) {
-                    logger.debug("Failed to get SOMAXCONN from sysctl and file {}. Default: {}", file, somaxconn, e);
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("Failed to get SOMAXCONN from sysctl and file {}. Default: {}",
+                                file, somaxconn, e);
+                    }
                 } finally {
                     if (in != null) {
                         try {
@@ -320,10 +323,10 @@ public final class NetUtil {
             BufferedReader br = new BufferedReader(isr);
             try {
                 String line = br.readLine();
-                if (line.startsWith(sysctlKey)) {
+                if (line != null && line.startsWith(sysctlKey)) {
                     for (int i = line.length() - 1; i > sysctlKey.length(); --i) {
                         if (!Character.isDigit(line.charAt(i))) {
-                            return Integer.valueOf(line.substring(i + 1, line.length()));
+                            return Integer.valueOf(line.substring(i + 1));
                         }
                     }
                 }
@@ -411,6 +414,18 @@ public final class NetUtil {
                 ipv4WordToByte(ip, i + 1, i = ip.indexOf('.', i + 2)),
                 ipv4WordToByte(ip, i + 1, ip.length())
         };
+    }
+
+    /**
+     * Convert {@link Inet4Address} into {@code int}
+     */
+    public static int ipv4AddressToInt(Inet4Address ipAddress) {
+        byte[] octets = ipAddress.getAddress();
+
+        return  (octets[0] & 0xff) << 24 |
+                (octets[1] & 0xff) << 16 |
+                (octets[2] & 0xff) << 8 |
+                 octets[3] & 0xff;
     }
 
     /**

@@ -108,7 +108,7 @@ public class CompressorHttp2ConnectionEncoder extends DecoratingHttp2ConnectionE
                 return promise;
             }
 
-            PromiseCombiner combiner = new PromiseCombiner();
+            PromiseCombiner combiner = new PromiseCombiner(ctx.executor());
             for (;;) {
                 ByteBuf nextBuf = nextReadableBuf(channel);
                 boolean compressedEndOfStream = nextBuf == null && endOfStream;
@@ -284,16 +284,7 @@ public class CompressorHttp2ConnectionEncoder extends DecoratingHttp2ConnectionE
      * @param compressor The compressor for {@code stream}
      */
     void cleanup(Http2Stream stream, EmbeddedChannel compressor) {
-        if (compressor.finish()) {
-            for (;;) {
-                final ByteBuf buf = compressor.readOutbound();
-                if (buf == null) {
-                    break;
-                }
-
-                buf.release();
-            }
-        }
+        compressor.finishAndReleaseAll();
         stream.removeProperty(propertyKey);
     }
 

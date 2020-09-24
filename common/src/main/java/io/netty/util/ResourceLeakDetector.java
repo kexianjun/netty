@@ -17,6 +17,7 @@
 package io.netty.util;
 
 import io.netty.util.internal.EmptyArrays;
+import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.SystemPropertyUtil;
 import io.netty.util.internal.logging.InternalLogger;
@@ -26,8 +27,10 @@ import java.lang.ref.WeakReference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,7 +49,12 @@ public class ResourceLeakDetector<T> {
     private static final String PROP_TARGET_RECORDS = "io.netty.leakDetection.targetRecords";
     private static final int DEFAULT_TARGET_RECORDS = 4;
 
+    private static final String PROP_SAMPLING_INTERVAL = "io.netty.leakDetection.samplingInterval";
+    // There is a minor performance benefit in TLR if this is a power of 2.
+    private static final int DEFAULT_SAMPLING_INTERVAL = 128;
+
     private static final int TARGET_RECORDS;
+    static final int SAMPLING_INTERVAL;
 
     /**
      * Represents the level of resource leak detection.
@@ -115,6 +123,7 @@ public class ResourceLeakDetector<T> {
         Level level = Level.parseLevel(levelStr);
 
         TARGET_RECORDS = SystemPropertyUtil.getInt(PROP_TARGET_RECORDS, DEFAULT_TARGET_RECORDS);
+        SAMPLING_INTERVAL = SystemPropertyUtil.getInt(PROP_SAMPLING_INTERVAL, DEFAULT_SAMPLING_INTERVAL);
 
         ResourceLeakDetector.level = level;
         if (logger.isDebugEnabled()) {
@@ -122,9 +131,6 @@ public class ResourceLeakDetector<T> {
             logger.debug("-D{}: {}", PROP_TARGET_RECORDS, TARGET_RECORDS);
         }
     }
-
-    // There is a minor performance benefit in TLR if this is a power of 2.
-    static final int DEFAULT_SAMPLING_INTERVAL = 128;
 
     /**
      * @deprecated Use {@link #setLevel(Level)} instead.
@@ -145,10 +151,7 @@ public class ResourceLeakDetector<T> {
      * Sets the resource leak detection level.
      */
     public static void setLevel(Level level) {
-        if (level == null) {
-            throw new NullPointerException("level");
-        }
-        ResourceLeakDetector.level = level;
+        ResourceLeakDetector.level = ObjectUtil.checkNotNull(level, "level");
     }
 
     /**
@@ -159,10 +162,12 @@ public class ResourceLeakDetector<T> {
     }
 
     /** the collection of active resources */
-    private final ConcurrentMap<DefaultResourceLeak<?>, LeakEntry> allLeaks = PlatformDependent.newConcurrentHashMap();
+    private final Set<DefaultResourceLeak<?>> allLeaks =
+            Collections.newSetFromMap(new ConcurrentHashMap<DefaultResourceLeak<?>, Boolean>());
 
     private final ReferenceQueue<Object> refQueue = new ReferenceQueue<Object>();
-    private final ConcurrentMap<String, Boolean> reportedLeaks = PlatformDependent.newConcurrentHashMap();
+    private final Set<String> reportedLeaks =
+            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     private final String resourceType;
     private final int samplingInterval;
@@ -214,11 +219,7 @@ public class ResourceLeakDetector<T> {
      */
     @Deprecated
     public ResourceLeakDetector(String resourceType, int samplingInterval, long maxActive) {
-        if (resourceType == null) {
-            throw new NullPointerException("resourceType");
-        }
-
-        this.resourceType = resourceType;
+        this.resourceType = ObjectUtil.checkNotNull(resourceType, "resourceType");
         this.samplingInterval = samplingInterval;
     }
 
@@ -265,7 +266,6 @@ public class ResourceLeakDetector<T> {
 
     private void clearRefQueue() {
         for (;;) {
-            @SuppressWarnings("unchecked")
             DefaultResourceLeak ref = (DefaultResourceLeak) refQueue.poll();
             if (ref == null) {
                 break;
@@ -274,15 +274,24 @@ public class ResourceLeakDetector<T> {
         }
     }
 
+    /**
+     * When the return value is {@code true}, {@link #reportTracedLeak} and {@link #reportUntracedLeak}
+     * will be called once a leak is detected, otherwise not.
+     *
+     * @return {@code true} to enable leak reporting.
+     */
+    protected boolean needReport() {
+        return logger.isErrorEnabled();
+    }
+
     private void reportLeak() {
-        if (!logger.isErrorEnabled()) {
+        if (!needReport()) {
             clearRefQueue();
             return;
         }
 
         // Detect and report previous leaks.
         for (;;) {
-            @SuppressWarnings("unchecked")
             DefaultResourceLeak ref = (DefaultResourceLeak) refQueue.poll();
             if (ref == null) {
                 break;
@@ -293,7 +302,7 @@ public class ResourceLeakDetector<T> {
             }
 
             String records = ref.toString();
-            if (reportedLeaks.putIfAbsent(records, Boolean.TRUE) == null) {
+            if (reportedLeaks.add(records)) {
                 if (records.isEmpty()) {
                     reportUntracedLeak(resourceType);
                 } else {
@@ -310,7 +319,7 @@ public class ResourceLeakDetector<T> {
     protected void reportTracedLeak(String resourceType, String records) {
         logger.error(
                 "LEAK: {}.release() was not called before it's garbage-collected. " +
-                "See http://netty.io/wiki/reference-counted-objects.html for more information.{}",
+                "See https://netty.io/wiki/reference-counted-objects.html for more information.{}",
                 resourceType, records);
     }
 
@@ -323,7 +332,7 @@ public class ResourceLeakDetector<T> {
                 "Enable advanced leak reporting to find out where the leak occurred. " +
                 "To enable advanced leak reporting, " +
                 "specify the JVM option '-D{}={}' or call {}.setLevel() " +
-                "See http://netty.io/wiki/reference-counted-objects.html for more information.",
+                "See https://netty.io/wiki/reference-counted-objects.html for more information.",
                 resourceType, PROP_LEVEL, Level.ADVANCED.name().toLowerCase(), simpleClassName(this));
     }
 
@@ -339,9 +348,9 @@ public class ResourceLeakDetector<T> {
             extends WeakReference<Object> implements ResourceLeakTracker<T>, ResourceLeak {
 
         @SuppressWarnings("unchecked") // generics and updaters do not mix.
-        private static final AtomicReferenceFieldUpdater<DefaultResourceLeak<?>, Record> headUpdater =
+        private static final AtomicReferenceFieldUpdater<DefaultResourceLeak<?>, TraceRecord> headUpdater =
                 (AtomicReferenceFieldUpdater)
-                        AtomicReferenceFieldUpdater.newUpdater(DefaultResourceLeak.class, Record.class, "head");
+                        AtomicReferenceFieldUpdater.newUpdater(DefaultResourceLeak.class, TraceRecord.class, "head");
 
         @SuppressWarnings("unchecked") // generics and updaters do not mix.
         private static final AtomicIntegerFieldUpdater<DefaultResourceLeak<?>> droppedRecordsUpdater =
@@ -349,17 +358,17 @@ public class ResourceLeakDetector<T> {
                         AtomicIntegerFieldUpdater.newUpdater(DefaultResourceLeak.class, "droppedRecords");
 
         @SuppressWarnings("unused")
-        private volatile Record head;
+        private volatile TraceRecord head;
         @SuppressWarnings("unused")
         private volatile int droppedRecords;
 
-        private final ConcurrentMap<DefaultResourceLeak<?>, LeakEntry> allLeaks;
+        private final Set<DefaultResourceLeak<?>> allLeaks;
         private final int trackedHash;
 
         DefaultResourceLeak(
                 Object referent,
                 ReferenceQueue<Object> refQueue,
-                ConcurrentMap<DefaultResourceLeak<?>, LeakEntry> allLeaks) {
+                Set<DefaultResourceLeak<?>> allLeaks) {
             super(referent, refQueue);
 
             assert referent != null;
@@ -368,9 +377,9 @@ public class ResourceLeakDetector<T> {
             // It's important that we not store a reference to the referent as this would disallow it from
             // be collected via the WeakReference.
             trackedHash = System.identityHashCode(referent);
-            allLeaks.put(this, LeakEntry.INSTANCE);
+            allLeaks.add(this);
             // Create a new Record so we always have the creation stacktrace included.
-            headUpdater.set(this, new Record(Record.BOTTOM));
+            headUpdater.set(this, new TraceRecord(TraceRecord.BOTTOM));
             this.allLeaks = allLeaks;
         }
 
@@ -413,9 +422,9 @@ public class ResourceLeakDetector<T> {
         private void record0(Object hint) {
             // Check TARGET_RECORDS > 0 here to avoid similar check before remove from and add to lastRecords
             if (TARGET_RECORDS > 0) {
-                Record oldHead;
-                Record prevHead;
-                Record newHead;
+                TraceRecord oldHead;
+                TraceRecord prevHead;
+                TraceRecord newHead;
                 boolean dropped;
                 do {
                     if ((prevHead = oldHead = headUpdater.get(this)) == null) {
@@ -431,7 +440,7 @@ public class ResourceLeakDetector<T> {
                     } else {
                         dropped = false;
                     }
-                    newHead = hint != null ? new Record(prevHead, hint) : new Record(prevHead);
+                    newHead = hint != null ? new TraceRecord(prevHead, hint) : new TraceRecord(prevHead);
                 } while (!headUpdater.compareAndSet(this, oldHead, newHead));
                 if (dropped) {
                     droppedRecordsUpdater.incrementAndGet(this);
@@ -441,13 +450,12 @@ public class ResourceLeakDetector<T> {
 
         boolean dispose() {
             clear();
-            return allLeaks.remove(this, LeakEntry.INSTANCE);
+            return allLeaks.remove(this);
         }
 
         @Override
         public boolean close() {
-            // Use the ConcurrentMap remove method, which avoids allocating an iterator.
-            if (allLeaks.remove(this, LeakEntry.INSTANCE)) {
+            if (allLeaks.remove(this)) {
                 // Call clear so the reference is not even enqueued.
                 clear();
                 headUpdater.set(this, null);
@@ -461,16 +469,47 @@ public class ResourceLeakDetector<T> {
             // Ensure that the object that was tracked is the same as the one that was passed to close(...).
             assert trackedHash == System.identityHashCode(trackedObject);
 
-            // We need to actually do the null check of the trackedObject after we close the leak because otherwise
-            // we may get false-positives reported by the ResourceLeakDetector. This can happen as the JIT / GC may
-            // be able to figure out that we do not need the trackedObject anymore and so already enqueue it for
-            // collection before we actually get a chance to close the enclosing ResourceLeak.
-            return close() && trackedObject != null;
+            try {
+                return close();
+            } finally {
+                // This method will do `synchronized(trackedObject)` and we should be sure this will not cause deadlock.
+                // It should not, because somewhere up the callstack should be a (successful) `trackedObject.release`,
+                // therefore it is unreasonable that anyone else, anywhere, is holding a lock on the trackedObject.
+                // (Unreasonable but possible, unfortunately.)
+                reachabilityFence0(trackedObject);
+            }
+        }
+
+         /**
+         * Ensures that the object referenced by the given reference remains
+         * <a href="package-summary.html#reachability"><em>strongly reachable</em></a>,
+         * regardless of any prior actions of the program that might otherwise cause
+         * the object to become unreachable; thus, the referenced object is not
+         * reclaimable by garbage collection at least until after the invocation of
+         * this method.
+         *
+         * <p> Recent versions of the JDK have a nasty habit of prematurely deciding objects are unreachable.
+         * see: https://stackoverflow.com/questions/26642153/finalize-called-on-strongly-reachable-object-in-java-8
+         * The Java 9 method Reference.reachabilityFence offers a solution to this problem.
+         *
+         * <p> This method is always implemented as a synchronization on {@code ref}, not as
+         * {@code Reference.reachabilityFence} for consistency across platforms and to allow building on JDK 6-8.
+         * <b>It is the caller's responsibility to ensure that this synchronization will not cause deadlock.</b>
+         *
+         * @param ref the reference. If {@code null}, this method has no effect.
+         * @see java.lang.ref.Reference#reachabilityFence
+         */
+        private static void reachabilityFence0(Object ref) {
+            if (ref != null) {
+                synchronized (ref) {
+                    // Empty synchronized is ok: https://stackoverflow.com/a/31933260/1151521
+                }
+            }
         }
 
         @Override
         public String toString() {
-            Record oldHead = headUpdater.getAndSet(this, null);
+            TraceRecord oldHead = headUpdater.getAndSet(this, null);
             if (oldHead == null) {
                 // Already closed
                 return EMPTY_STRING;
@@ -486,10 +525,10 @@ public class ResourceLeakDetector<T> {
 
             int i = 1;
             Set<String> seen = new HashSet<String>(present);
-            for (; oldHead != Record.BOTTOM; oldHead = oldHead.next) {
+            for (; oldHead != TraceRecord.BOTTOM; oldHead = oldHead.next) {
                 String s = oldHead.toString();
                 if (seen.add(s)) {
-                    if (oldHead.next == Record.BOTTOM) {
+                    if (oldHead.next == TraceRecord.BOTTOM) {
                         buf.append("Created at:").append(NEWLINE).append(s);
                     } else {
                         buf.append('#').append(i++).append(':').append(NEWLINE).append(s);
@@ -501,7 +540,7 @@ public class ResourceLeakDetector<T> {
 
             if (duped > 0) {
                 buf.append(": ")
-                        .append(dropped)
+                        .append(duped)
                         .append(" leak records were discarded because they were duplicates")
                         .append(NEWLINE);
             }
@@ -549,30 +588,30 @@ public class ResourceLeakDetector<T> {
         } while (!excludedMethods.compareAndSet(oldMethods, newMethods));
     }
 
-    private static final class Record extends Throwable {
+    private static final class TraceRecord extends Throwable {
         private static final long serialVersionUID = 6065153674892850720L;
 
-        private static final Record BOTTOM = new Record();
+        private static final TraceRecord BOTTOM = new TraceRecord();
 
         private final String hintString;
-        private final Record next;
+        private final TraceRecord next;
         private final int pos;
 
-        Record(Record next, Object hint) {
+        TraceRecord(TraceRecord next, Object hint) {
             // This needs to be generated even if toString() is never called as it may change later on.
             hintString = hint instanceof ResourceLeakHint ? ((ResourceLeakHint) hint).toHintString() : hint.toString();
             this.next = next;
             this.pos = next.pos + 1;
         }
 
-        Record(Record next) {
+        TraceRecord(TraceRecord next) {
            hintString = null;
            this.next = next;
            this.pos = next.pos + 1;
         }
 
         // Used to terminate the stack
-        private Record() {
+        private TraceRecord() {
             hintString = null;
             next = null;
             pos = -1;
@@ -604,24 +643,6 @@ public class ResourceLeakDetector<T> {
                 buf.append(NEWLINE);
             }
             return buf.toString();
-        }
-    }
-
-    private static final class LeakEntry {
-        static final LeakEntry INSTANCE = new LeakEntry();
-        private static final int HASH = System.identityHashCode(INSTANCE);
-
-        private LeakEntry() {
-        }
-
-        @Override
-        public int hashCode() {
-            return HASH;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            return obj == this;
         }
     }
 }

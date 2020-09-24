@@ -17,6 +17,7 @@ package io.netty.handler.ssl;
 
 import io.netty.util.internal.EmptyArrays;
 import io.netty.util.internal.PlatformDependent;
+import io.netty.util.internal.SuppressJava6Requirement;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
@@ -28,6 +29,7 @@ import java.lang.reflect.Field;
 import java.security.AccessController;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
 import java.security.PrivilegedAction;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
@@ -39,6 +41,7 @@ import java.security.cert.X509Certificate;
  * This is really a "hack" until there is an official API as requested on the in
  * <a href="https://bugs.openjdk.java.net/projects/JDK/issues/JDK-8210843">JDK-8210843</a>.
  */
+@SuppressJava6Requirement(reason = "Usage guarded by java version check")
 final class OpenSslX509TrustManagerWrapper {
     private static final InternalLogger LOGGER = InternalLoggerFactory
             .getInstance(OpenSslX509TrustManagerWrapper.class);
@@ -71,11 +74,13 @@ final class OpenSslX509TrustManagerWrapper {
                             @Override
                             public void checkClientTrusted(X509Certificate[] x509Certificates, String s)
                                     throws CertificateException {
+                                throw new CertificateException();
                             }
 
                             @Override
                             public void checkServerTrusted(X509Certificate[] x509Certificates, String s)
                                     throws CertificateException {
+                                throw new CertificateException();
                             }
 
                             @Override
@@ -148,8 +153,10 @@ final class OpenSslX509TrustManagerWrapper {
         X509TrustManager wrapIfNeeded(X509TrustManager manager);
     }
 
-    private static SSLContext newSSLContext() throws NoSuchAlgorithmException {
-        return SSLContext.getInstance("TLS");
+    private static SSLContext newSSLContext() throws NoSuchAlgorithmException, NoSuchProviderException {
+        // As this depends on the implementation detail we should explicit select the correct provider.
+        // See https://github.com/netty/netty/issues/10374
+        return SSLContext.getInstance("TLS", "SunJSSE");
     }
 
     private static final class UnsafeTrustManagerWrapper implements TrustManagerWrapper {
@@ -161,6 +168,7 @@ final class OpenSslX509TrustManagerWrapper {
             this.tmOffset = tmOffset;
         }
 
+        @SuppressJava6Requirement(reason = "Usage guarded by java version check")
         @Override
         public X509TrustManager wrapIfNeeded(X509TrustManager manager) {
             if (!(manager instanceof X509ExtendedTrustManager)) {
@@ -175,11 +183,15 @@ final class OpenSslX509TrustManagerWrapper {
                         }
                     }
                 } catch (NoSuchAlgorithmException e) {
-                    // This should never happen as we did the same in the static
+                    // This should never happen as we did the same in the static block
                     // before.
                     PlatformDependent.throwException(e);
                 } catch (KeyManagementException e) {
-                    // This should never happen as we did the same in the static
+                    // This should never happen as we did the same in the static block
+                    // before.
+                    PlatformDependent.throwException(e);
+                } catch (NoSuchProviderException e) {
+                    // This should never happen as we did the same in the static block
                     // before.
                     PlatformDependent.throwException(e);
                 }
