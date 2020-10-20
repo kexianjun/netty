@@ -16,6 +16,7 @@
 package io.netty.example.echo;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -46,6 +47,24 @@ public class EchoClientHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        ByteBuf byteBuf = (ByteBuf) msg;
+        PooledByteBufAllocator pooledByteBufAllocator = PooledByteBufAllocator.DEFAULT;
+        ByteBuf copiedBuffer = pooledByteBufAllocator.heapBuffer(byteBuf.capacity());
+        System.out.println(msg.getClass().getName());
+        copiedBuffer.writeBytes(byteBuf.copy());
+
+        int readableBytes = copiedBuffer.readableBytes();
+        StringBuilder stringBuilder = new StringBuilder();
+        for (int i = 0; i < readableBytes; i++) {
+            stringBuilder.append(copiedBuffer.readByte());
+        }
+        copiedBuffer.release();
+        System.out.println(stringBuilder.toString());
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+
+        }
         ctx.write(msg);
     }
 

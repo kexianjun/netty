@@ -75,7 +75,7 @@
           <scope>compile</scope>
           <optional>true</optional>
         </dependency>
-        <dependency>
+        <!--<dependency>
           <groupId>${project.groupId}</groupId>
           <artifactId>netty-transport-native-kqueue</artifactId>
           <classifier>osx-x86_64</classifier>
@@ -88,7 +88,7 @@
           <classifier>osx-x86_64</classifier>
           <scope>compile</scope>
           <optional>true</optional>
-        </dependency>
+        </dependency>-->
       </dependencies>
     </profile>
     <profile>
@@ -111,7 +111,7 @@
           <scope>compile</scope>
           <optional>true</optional>
         </dependency>
-        <dependency>
+        <!--<dependency>
           <groupId>${project.groupId}</groupId>
           <artifactId>netty-transport-native-kqueue</artifactId>
           <classifier>osx-x86_64</classifier>
@@ -124,7 +124,7 @@
           <classifier>osx-x86_64</classifier>
           <scope>compile</scope>
           <optional>true</optional>
-        </dependency>
+        </dependency>-->
       </dependencies>
     </profile>
 
@@ -149,7 +149,7 @@
           <optional>true</optional>
         </dependency>
         <!-- Just include the classes for the other platform so these are at least present in the netty-all artifact -->
-        <dependency>
+        <!--<dependency>
           <groupId>${project.groupId}</groupId>
           <artifactId>netty-transport-native-kqueue</artifactId>
           <scope>compile</scope>
@@ -160,7 +160,7 @@
           <artifactId>netty-resolver-dns-native-macos</artifactId>
           <scope>compile</scope>
           <optional>true</optional>
-        </dependency>
+        </dependency>-->
       </dependencies>
     </profile>
     <!-- The mac, openbsd and freebsd  profile will only include the native jar for epol to the all jar.
@@ -175,7 +175,7 @@
       </activation>
       <dependencies>
         <!-- All release modules -->
-        <dependency>
+        <!--<dependency>
           <groupId>${project.groupId}</groupId>
           <artifactId>netty-transport-native-kqueue</artifactId>
           <version>${project.version}</version>
@@ -189,7 +189,7 @@
           <classifier>osx-x86_64</classifier>
           <scope>compile</scope>
           <optional>true</optional>
-        </dependency>
+        </dependency>-->
         <!-- Just include the classes for the other platform so these are at least present in the netty-all artifact -->
         <dependency>
           <groupId>${project.groupId}</groupId>
@@ -209,14 +209,14 @@
       </activation>
       <dependencies>
         <!-- All release modules -->
-        <dependency>
+        <!--<dependency>
           <groupId>${project.groupId}</groupId>
           <artifactId>netty-transport-native-kqueue</artifactId>
           <version>${project.version}</version>
           <classifier>${jni.classifier}</classifier>
           <scope>compile</scope>
           <optional>true</optional>
-        </dependency>
+        </dependency>-->
         <!-- Just include the classes for the other platform so these are at least present in the netty-all artifact -->
         <dependency>
           <groupId>${project.groupId}</groupId>
@@ -236,14 +236,14 @@
       </activation>
       <dependencies>
         <!-- All release modules -->
-        <dependency>
+        <!--<dependency>
           <groupId>${project.groupId}</groupId>
           <artifactId>netty-transport-native-kqueue</artifactId>
           <version>${project.version}</version>
           <classifier>${jni.classifier}</classifier>
           <scope>compile</scope>
           <optional>true</optional>
-        </dependency>
+        </dependency>-->
         <!-- Just include the classes for the other platform so these are at least present in the netty-all artifact -->
         <dependency>
           <groupId>${project.groupId}</groupId>
